@@ -44,6 +44,12 @@
 
 #include "memdbg.h"
 
+#if defined(TARGET_LINUX) && defined(ENABLE_MPTCP)
+#ifndef IPPROTO_MPTCP
+#define IPPROTO_MPTCP 262
+#endif
+#endif
+
 /*
  * Convert sockflags/getaddr_flags into getaddr_flags
  */
@@ -1082,6 +1088,39 @@ create_socket_udp(struct addrinfo *addrinfo, const unsigned int flags)
     return sd;
 }
 
+#if defined(TARGET_LINUX) && defined(ENABLE_MPTCP)
+socket_descriptor_t
+create_socket_mptcp(struct addrinfo *addrinfo)
+{
+    socket_descriptor_t sd;
+
+    ASSERT(addrinfo);
+    ASSERT(addrinfo->ai_socktype == SOCK_STREAM);
+    addrinfo->ai_protocol = IPPROTO_MPTCP;
+    if ((sd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol)) < 0)
+    {
+        msg(M_ERR, "Cannot create MPTCP socket");
+    }
+
+    {
+        int on = 1;
+        if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR,
+                       (void *) &on, sizeof(on)) < 0)
+        {
+            msg(M_ERR, "TCP: Cannot setsockopt SO_REUSEADDR on TCP socket");
+        }
+    }
+
+    /* set socket file descriptor to not pass across execs, so that
+     * scripts don't have access to it */
+    set_cloexec(sd);
+
+    return sd;
+}
+
+#endif
+
+
 static void
 bind_local(struct link_socket *sock, const sa_family_t ai_family)
 {
@@ -1125,6 +1164,21 @@ create_socket(struct link_socket *sock, struct addrinfo *addr)
     }
     else if (addr->ai_protocol == IPPROTO_TCP || addr->ai_socktype == SOCK_STREAM)
     {
+#if defined(TARGET_LINUX) && defined(ENABLE_MPTCP)
+      if(sock->info.multipath)
+      {
+	sock->sd = create_socket_mptcp(addr);
+	// Multipath TCP could fail because it is not enabled on this host
+	// Try regular TCP
+	if(sock->sd == -1)
+	{
+
+	  msg(M_NONFATAL, "Can't resolve MPTCP socket, fallback to TCP !");
+	  sock->sd = create_socket_tcp(addr);
+	}
+      }
+      else
+#endif	
         sock->sd = create_socket_tcp(addr);
     }
     else
@@ -1849,7 +1903,11 @@ link_socket_init_phase1(struct context *c, int mode)
     sock->bind_local = o->ce.bind_local;
     sock->resolve_retry_seconds = o->resolve_retry_seconds;
     sock->mtu_discover_type = o->ce.mtu_discover_type;
-
+    
+#if defined(TARGET_LINUX) && defined(ENABLE_MPTCP)
+    sock->info.multipath = o->enable_multipath;
+#endif
+    
 #ifdef ENABLE_DEBUG
     sock->gremlin = o->gremlin;
 #endif
@@ -2208,7 +2266,7 @@ link_socket_init_phase2(struct context *c)
         else
 #endif
         {
-            create_socket(sock, sock->info.lsa->current_remote);
+	  create_socket(sock, sock->info.lsa->current_remote);
         }
 
     }

@@ -448,6 +448,9 @@ struct options
 #define SF_NO_PUSH_ROUTE_GATEWAY (1<<2)
     unsigned int server_flags;
 
+#ifdef ENABLE_MPTCP
+    bool enable_multipath;
+#endif  
     bool server_bridge_proxy_dhcp;
 
     bool server_bridge_defined;
